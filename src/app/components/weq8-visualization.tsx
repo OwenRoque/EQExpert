@@ -47,12 +47,24 @@ export interface EQPreset {
     presetString: string
 }
 
+interface WEQ8UIElement extends HTMLElement {
+    runtime?: WEQ8Runtime
+}
+
+// Extend the window type to include webkitAudioContext
+declare global {
+    interface Window {
+        webkitAudioContext?: typeof AudioContext
+    }
+}
+
 export default function WEQ8Visualization({ bands }: EQVisualizationProps) {
-    const eqRef = useRef<any>(null)
+    const eqRef = useRef<WEQ8UIElement | null>(null)
     const runtimeRef = useRef<WEQ8Runtime | null>(null)
 
     useEffect(() => {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const AudioCtx = window.AudioContext || window.webkitAudioContext
+        const ctx = new AudioCtx()
         const runtime = new WEQ8Runtime(ctx)
         runtimeRef.current = runtime
 
@@ -73,7 +85,7 @@ export default function WEQ8Visualization({ bands }: EQVisualizationProps) {
         osc.stop(ctx.currentTime + 0.01)
 
         if (eqRef.current) {
-            (eqRef.current as any).runtime = runtime
+            eqRef.current.runtime = runtime
         }
 
         return () => {
@@ -83,8 +95,8 @@ export default function WEQ8Visualization({ bands }: EQVisualizationProps) {
 
     return (
         <div className="w-full rounded-lg border overflow-hidden">
-            {/** @ts-ignore */}
-            <weq8-ui ref={eqRef} style={{ width: "100%", height: "100%", padding: "20px", boxSizing: "border-box"}}></weq8-ui>
+            {/* @ts-expect-error: weq8-ui is a custom element not recognized by TS */}
+            <weq8-ui ref={eqRef} style={{ width: "100%", height: "100%", padding: "20px", boxSizing: "border-box" }}></weq8-ui>
         </div>
     )
 }

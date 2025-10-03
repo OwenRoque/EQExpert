@@ -31,11 +31,18 @@ El backend del proyecto se encuentra en `src/backend` y corre un servidor FastAP
 
 ### Pasos para ejecutar el backend
 
-1. Abre una terminal en la raíz del proyecto y crea un entorno virtual en la carpeta `src`:
+1. Abre una terminal en la raíz del proyecto y crea un entorno virtual en la carpeta `src/backend`:
 
-   ```bash
-   py -m venv src/venv
-    ```
+   - En Windows:
+    ```bash
+    py -m venv src/venv
+     ```
+
+   - En Linux:
+    ```bash
+    cd src/backend
+    python3 -m venv venv
+     ```
    
 2. Activa el entorno virtual:
 
@@ -43,15 +50,15 @@ El backend del proyecto se encuentra en `src/backend` y corre un servidor FastAP
     ```bash
    src\venv\Scripts\activate
     ```
-   - En Mac/Linux:
+   - En Linux:
    ```bash
-   source src/venv/bin/activate
+   source venv/bin/activate
     ```
 
 3. Instala las dependencias necesarias:
 
    ```bash
-   pip install fastapi uvicorn pyswip pydantic
+   pip install -r requirements.txt
     ```
 
 
@@ -59,10 +66,11 @@ El backend del proyecto se encuentra en `src/backend` y corre un servidor FastAP
 
    ```bash
    cd src/backend
-   uvicorn main:app --reload --port 5000
+   gunicorn main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:5000 --workers 3 --log-level info
     ```
 
-⚠️ Asegúrate de tener instalado SWI-Prolog para que pyswip funcione correctamente.
+⚠️ Asegúrate de tener instalado [SWI-Prolog](https://www.swi-prolog.org/build/PPA.html) para que pyswip funcione correctamente.
+
 
 ## Learn More
 
