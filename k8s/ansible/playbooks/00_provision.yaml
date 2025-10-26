@@ -1,0 +1,358 @@
+---
+- name: Provision AWS infra for Kubernetes Cluster
+  hosts: localhost
+  connection: local
+  vars:
+    aws_region: "us-east-1"
+    availability_zone: "us-east-1b"
+    vpc_cidr: "10.20.0.0/16"
+    public_subnet_cidr: "10.20.1.0/24"
+    private_subnet_cidr: "10.20.2.0/24"
+
+    # Names / tags
+    vpc_name: "k8s-vpc"
+    sg_master_name: "k8s-controlplane-sg"
+    sg_worker_name: "k8s-workers-sg"
+    my_public_ip: "181.176.72.117/32"
+    cluster_name: "dev-{{ availability_zone }}-k8s-cluster"
+    worker_asg_name: "k8s-workers-asg"
+
+    # SSH / Keypair
+    ssh_key_name: "k8s-key"
+    ssh_public_key_path: "~/.ssh/k8s_key.pub"
+
+    # Master instance
+    master_instance_type: "t3.medium"
+    master_volume_size: 12
+    master_volume_type: "gp3"
+    master_count: 1
+
+    # Workers (2 nodes initial)
+    worker_instance_type: "t2.micro"
+    worker_volume_size: 8
+    worker_volume_type: "gp3"
+    worker_asg_min: 2
+    worker_asg_max: 6
+    worker_asg_desired: 2
+
+    # AMI Ubuntu 24.04 en us-east-1b
+    ami: "ami-0360c520857e3138f"
+
+    # Launch template / user-data: instala docker & tools (simple)
+    user_data: |
+      #cloud-config
+      package_update: true
+      packages:
+        - docker.io
+        - python3
+        - python3-pip
+      runcmd:
+        - [ sh, -c, "usermod -aG docker ubuntu || true" ]
+        - [ sh, -c, "systemctl enable docker && systemctl start docker" ]
+        - [ sh, -c, "swapoff -a || true" ]
+
+  gather_facts: false
+
+  vars_files:
+    - ../group_vars/all/pass.yml
+
+  tasks:
+    - name: Create VPC
+      amazon.aws.ec2_vpc_net:
+        name: "{{ vpc_name }}"
+        cidr_block: "{{ vpc_cidr }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        tags:
+          Environment: K8s
+      register: vpc
+
+    - name: Create public subnet
+      amazon.aws.ec2_vpc_subnet:
+        vpc_id: "{{ vpc.vpc.id }}"
+        cidr: "{{ public_subnet_cidr }}"
+        region: "{{ aws_region }}"
+        az: "{{ availability_zone }}"
+        map_public: true
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        tags:
+          Name: k8s-public-subnet
+      register: subnet
+
+    - name: Create Internet Gateway
+      amazon.aws.ec2_vpc_igw:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: igw
+
+    - name: Create Custom Route Table
+      amazon.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        subnets:
+          - "{{ subnet.subnet.id }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw.gateway_id }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        tags:
+          Name: k8s-rt
+      register: rt
+
+    - name: Create Security Group for Kubernetes Control Plane
+      amazon.aws.ec2_security_group:
+        name: "{{ sg_master_name }}"
+        description: "Security Group for Kubernetes Control Plane"
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        rules:
+          # SSH solo desde ansible control-node IP
+          - proto: tcp
+            ports: 22
+            cidr_ip: "{{ my_public_ip }}"
+            rule_desc: "SSH restricted access"
+
+          # Kubernetes API - accesible desde mi IP
+          - proto: tcp
+            ports: 6443
+            cidr_ip: "{{ my_public_ip }}"
+            rule_desc: "K8s API for admin"
+
+        rules_egress:
+          - proto: -1
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "Allow all outbound"
+      register: sg_controlplane
+
+    - name: Create Security Group for Kubernetes Worker Nodes
+      amazon.aws.ec2_security_group:
+        name: "{{ sg_worker_name }}"
+        description: "Security Group for Kubernetes Worker Nodes"
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        rules:
+          # SSH opcional (podemos quitarlo luego)
+          - proto: tcp
+            ports: 22
+            cidr_ip: "{{ my_public_ip }}"
+            rule_desc: "Temporary SSH to workers"
+
+          # NodePort Services (externally accessible)
+          - proto: tcp
+            ports: "30000-32767"
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "NodePort TCP services"
+
+          - proto: udp
+            ports: "30000-32767"
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "NodePort UDP services"
+
+        rules_egress:
+          - proto: -1
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "Allow all outbound"
+      register: sg_workers
+
+    - name: Add Master inbound rules that depend on Worker SG
+      amazon.aws.ec2_security_group:
+        name: "{{ sg_master_name }}"
+        description: "Security Group for Kubernetes Control Plane"
+        region: "{{ aws_region }}"
+        purge_rules: false
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        rules:
+          # Kubernetes API - accesible desde Workers
+          - proto: tcp
+            ports: 6443
+            group_name: "{{ sg_worker_name }}"
+            rule_desc: "K8s API accessible from workers"
+
+          # etcd interno
+          - proto: tcp
+            ports: "2379-2380"
+            group_name: "{{ sg_master_name }}"
+            rule_desc: "etcd cluster internal"
+
+          # Kubelet API desde Workers
+          - proto: tcp
+            ports: 10250
+            group_name: "{{ sg_worker_name }}"
+            rule_desc: "Kubelet internal from workers"
+
+          # Scheduler / Controller solo internos
+          - proto: tcp
+            ports: 10257
+            group_name: "{{ sg_master_name }}"
+            rule_desc: "Controller Manager internal only"
+
+          - proto: tcp
+            ports: 10259
+            group_name: "{{ sg_master_name }}"
+            rule_desc: "Scheduler internal only"
+
+    - name: Add Worker inbound rules from Master SG
+      amazon.aws.ec2_security_group:
+        name: "{{ sg_worker_name }}"
+        description: "Security Group for Kubernetes Worker Nodes"
+        region: "{{ aws_region }}"
+        purge_rules: false
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        rules:
+          # Kubelet API accesible desde control plane
+          - proto: tcp
+            ports: 10250
+            group_name: "{{ sg_master_name }}"
+            rule_desc: "Kubelet API from Control Plane"
+
+          # kube-proxy interno
+          - proto: tcp
+            ports: 10256
+            group_name: "{{ sg_master_name }}"
+            rule_desc: "kube-proxy internal"
+
+    - name: Import SSH public key to AWS (create keypair)
+      amazon.aws.ec2_key:
+        name: "{{ ssh_key_name }}"
+        key_material: "{{ lookup('file', ssh_public_key_path) }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: imported_keypair
+
+    - name: Launch master EC2 instance
+      amazon.aws.ec2_instance:
+        name: "{{ cluster_name }}-master"
+        image_id: "{{ ami }}"
+        instance_type: "{{ master_instance_type }}"
+        key_name: "{{ ssh_key_name }}"
+        region: "{{ aws_region }}"
+        availability_zone: "{{ availability_zone }}"
+        exact_count: 1
+        tags:
+          kubernetes.io/role: control-plane
+        filters:
+          "tag:kubernetes.io/role": "control-plane"
+          instance-state-name: [ "pending", "running", "stopping", "stopped" ]
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        network_interfaces:
+          - subnet_id: "{{ subnet.subnet.id }}"
+            assign_public_ip: true
+            groups:
+              - "{{ sg_controlplane.group_id }}"
+        volumes:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: "{{ master_volume_size }}"
+              volume_type: "{{ master_volume_type }}"
+              delete_on_termination: true
+        user_data: "{{ user_data }}"
+        wait: true
+      register: master_instance
+
+    - name: Create Launch Template for Workers
+      amazon.aws.ec2_launch_template:
+        name: "{{ cluster_name }}-worker-lt"
+        version_description: "Launch Template for K8s workers"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        image_id: "{{ ami }}"
+        instance_type: "{{ worker_instance_type }}"
+        key_name: "{{ ssh_key_name }}"
+        user_data: "{{ user_data | b64encode }}"
+        block_device_mappings:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: "{{ worker_volume_size }}"
+              volume_type: "{{ worker_volume_type }}"
+              delete_on_termination: true
+        network_interfaces:
+          - device_index: 0
+            associate_public_ip_address: true
+            subnet_id: "{{ subnet.subnet.id }}"
+            groups:
+              - "{{ sg_workers.group_id }}"
+        monitoring:
+          enabled: true
+      register: worker_lt
+
+    - name: Create Auto Scaling Group for Workers
+      amazon.aws.autoscaling_group:
+        name: "{{ worker_asg_name }}"
+        state: present
+        min_size: "{{ worker_asg_min }}"
+        max_size: "{{ worker_asg_max }}"
+        desired_capacity: "{{ worker_asg_desired }}"
+        vpc_zone_identifier:
+          - "{{ subnet.subnet.id }}"
+        launch_template:
+          version: "$Latest"
+          launch_template_name: "{{ worker_lt.template.launch_template_name }}"
+          launch_template_id: "{{ worker_lt.template.launch_template_id }}"
+        wait_for_instances: true
+        region: "{{ aws_region }}"
+        metrics_collection: true
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        tags:
+          - Name: "{{ cluster_name }}-worker"
+            propagate_at_launch: true
+          - kubernetes.io/role: worker
+            propagate_at_launch: true
+      register: worker_asg
+
+    - name: Create Target Tracking Scaling Policy for ASG
+      community.aws.autoscaling_policy:
+        name: "k8s-predefined-policy-1"
+        state: present
+        asg_name: "{{ worker_asg_name }}"
+        policy_type: "TargetTrackingScaling"
+        target_tracking_config:
+          predefined_metric_spec:
+            predefined_metric_type: "ASGAverageCPUUtilization"
+          target_value: 70.0
+          disable_scalein: false
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        region: "{{ aws_region }}"
+
+    - name: DEBUG - Show Master public IP and instance id
+      ansible.builtin.debug:
+        msg:
+          - "Master Instance ID: {{ master_instance.instances[0].instance_id }}"
+          - "Master Public IP: {{ master_instance.instances[0].public_ip_address }}"
+
+    - name: DEBUG - Show Worker ASG name and desired capacity
+      ansible.builtin.debug:
+        msg:
+          - "{{ worker_asg_name }}"
+          - "{{ worker_asg.instance_facts }}"
+
+#    - name: DEBUG - Query instances launched by ASG (list instance IDs)
+#      amazon.aws.ec2_instance_info:
+#        filters:
+#          "tag:aws:autoscaling:groupName": "{{ worker_asg_name }}"
+#        region: "{{ aws_region }}"
+#        aws_access_key: "{{ ec2_access_key }}"
+#        aws_secret_key: "{{ ec2_secret_key }}"
+#      register: asg_instances_info
+#      retries: 6
+#      delay: 10
+#      until: asg_instances_info.instances | length >= worker_asg_desired
+#
+#    - name: DEBUG - Show Worker instances details
+#      ansible.builtin.debug:
+#        var: asg_instances_info.instances
