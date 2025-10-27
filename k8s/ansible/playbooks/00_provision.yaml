@@ -13,7 +13,6 @@
     vpc_name: "k8s-vpc"
     sg_master_name: "k8s-controlplane-sg"
     sg_worker_name: "k8s-workers-sg"
-    my_public_ip: "181.176.72.117/32"
     cluster_name: "dev-{{ availability_zone }}-k8s-cluster"
     worker_asg_name: "k8s-workers-asg"
 
@@ -22,13 +21,13 @@
     ssh_public_key_path: "~/.ssh/k8s_key.pub"
 
     # Master instance
-    master_instance_type: "t3.medium"
+    master_instance_type: "t3.large"
     master_volume_size: 12
     master_volume_type: "gp3"
     master_count: 1
 
     # Workers (2 nodes initial)
-    worker_instance_type: "t2.micro"
+    worker_instance_type: "t3.medium"
     worker_volume_size: 8
     worker_volume_type: "gp3"
     worker_asg_min: 2
@@ -103,6 +102,11 @@
         tags:
           Name: k8s-rt
       register: rt
+
+    - name: Detect public IP dynamically
+      set_fact:
+        my_public_ip: "{{ lookup('url', 'https://checkip.amazonaws.com') | trim }}/32"
+
 
     - name: Create Security Group for Kubernetes Control Plane
       amazon.aws.ec2_security_group:
@@ -222,6 +226,12 @@
             group_name: "{{ sg_master_name }}"
             rule_desc: "kube-proxy internal"
 
+          # Kubernetes API disponible desde workers
+          - proto: tcp
+            ports: 6443
+            group_name: "{{ sg_worker_name }}"
+            rule_desc: "API K8s accesible desde workers"
+
     - name: Import SSH public key to AWS (create keypair)
       amazon.aws.ec2_key:
         name: "{{ ssh_key_name }}"
@@ -239,7 +249,7 @@
         key_name: "{{ ssh_key_name }}"
         region: "{{ aws_region }}"
         availability_zone: "{{ availability_zone }}"
-        exact_count: 1
+        exact_count: "{{ master_count }}"
         tags:
           kubernetes.io/role: control-plane
         filters:

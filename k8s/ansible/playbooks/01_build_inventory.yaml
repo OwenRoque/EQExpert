@@ -1,0 +1,100 @@
+---
+- name: Wait for instances & build kubespray inventory
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    aws_region: "us-east-1"
+    availability_zone: "us-east-1b"
+
+    # Tags configurados en el playbook anterior
+    master_tag_val: "control-plane"
+    worker_tag_val: "worker"
+
+  vars_files:
+    - ../group_vars/all/pass.yml
+
+  tasks:
+    - name: Gather master instances by tag
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        filters:
+          availability-zone: "{{ availability_zone }}"
+          "tag:kubernetes.io/role": "{{ master_tag_val }}"
+          instance-state-name: ["running"]
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: master_info
+
+    - name: Gather worker instances by tag
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        filters:
+          availability-zone: "{{ availability_zone }}"
+          "tag:kubernetes.io/role": "{{ worker_tag_val }}"
+          instance-state-name: ["running"]
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: worker_info
+
+    - name: Ensure at least 1 master is present
+      ansible.builtin.assert:
+        that:
+          - master_info.instances | length > 0
+        fail_msg: "No master nodes found!"
+
+    - name: Ensure at least 1 worker is present
+      ansible.builtin.assert:
+        that:
+          - worker_info.instances | length > 0
+        fail_msg: "No worker nodes found!"
+
+    - name: Wait for SSH on masters
+      ansible.builtin.wait_for:
+        host: "{{ item.public_ip_address }}"
+        port: 22
+        timeout: 600
+      loop: "{{ master_info.instances }}"
+      no_log: true
+
+    - name: Wait for SSH on workers
+      ansible.builtin.wait_for:
+        host: "{{ item.public_ip_address }}"
+        port: 22
+        timeout: 600
+      loop: "{{ worker_info.instances }}"
+      no_log: true
+
+    - name: Ensure inventory directory exists
+      ansible.builtin.file:
+        path: "../inventory/mycluster"
+        state: directory
+        mode: '0755'
+
+    - name: Copy Kubespray sample inventory as base
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../kubespray/inventory/sample/"
+        dest: "{{ playbook_dir }}/../../kubespray/inventory/mycluster/"
+        remote_src: false
+
+    - name: Create Kubespray compatible inventory
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/../../kubespray/inventory/mycluster/inventory.ini"
+        mode: '0644'
+        content: |
+          [kube_control_plane]
+          {% for master in master_info.instances %}
+          master-node ansible_host={{ master.public_ip_address }} ip={{ master.private_ip_address }} etcd_member_name=etcd1
+          {% endfor %}
+
+          [etcd:children]
+          kube_control_plane
+
+          [kube_node]
+          {% for worker in worker_info.instances %}
+          worker-node-{{ loop.index }} ansible_host={{ worker.public_ip_address }} ip={{ worker.private_ip_address }}
+          {% endfor %}
+
+          [k8s_cluster:children]
+          kube_control_plane
+          kube_node
