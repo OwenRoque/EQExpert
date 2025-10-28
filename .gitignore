@@ -55,5 +55,4 @@ next-env.d.ts
 /k8s/ansible/vault.pass
 
 # kubespray
-/k8s/kubespray/
-!/k8s/kubespray/inventory/mycluster/
+k8s/kubespray/
