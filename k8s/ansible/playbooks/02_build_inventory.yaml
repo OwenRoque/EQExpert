@@ -5,8 +5,6 @@
   gather_facts: no
   vars:
     aws_region: "us-east-1"
-    availability_zone: "us-east-1b"
-
     # Tags configurados en el playbook anterior
     master_tag_val: "control-plane"
     worker_tag_val: "worker"
@@ -19,7 +17,6 @@
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
         filters:
-          availability-zone: "{{ availability_zone }}"
           "tag:kubernetes.io/role": "{{ master_tag_val }}"
           instance-state-name: ["running"]
         aws_access_key: "{{ ec2_access_key }}"
@@ -30,7 +27,6 @@
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
         filters:
-          availability-zone: "{{ availability_zone }}"
           "tag:kubernetes.io/role": "{{ worker_tag_val }}"
           instance-state-name: ["running"]
         aws_access_key: "{{ ec2_access_key }}"
@@ -64,12 +60,6 @@
         timeout: 600
       loop: "{{ worker_info.instances }}"
       no_log: true
-
-    - name: Ensure inventory directory exists
-      ansible.builtin.file:
-        path: "../inventory/mycluster"
-        state: directory
-        mode: '0755'
 
     - name: Copy Kubespray sample inventory as base
       ansible.builtin.copy:

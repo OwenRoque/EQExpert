@@ -1,0 +1,273 @@
+---
+- name: Deploy Application Load Balancer & Autoscaler
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # General variables
+    aws_region: "us-east-1"
+    vpc_name: "k8s-vpc"
+    subnet_name: "k8s-public-subnet"
+    sg_worker_name: "k8s-workers-sg"
+    cluster_name: "dev-{{ aws_region }}-k8s-cluster"
+    worker_tag: "worker"
+
+    # SSH / Keypair
+    ssh_key_name: "k8s-key"
+    ssh_public_key_path: "~/.ssh/k8s_key.pub"
+
+    # Workers (2 nodes initial)
+    worker_instance_type: "t3.medium"
+    worker_volume_size: 32
+    worker_volume_type: "gp3"
+
+    # AMI Ubuntu 24.04 en us-east-1
+    ami: "ami-0360c520857e3138f"
+
+    # Launch template / user-data: instala docker & tools (simple)
+    user_data: |
+      #cloud-config
+      package_update: true
+      packages:
+        - docker.io
+        - python3
+        - python3-pip
+      runcmd:
+        - [ sh, -c, "usermod -aG docker ubuntu || true" ]
+        - [ sh, -c, "systemctl enable docker && systemctl start docker" ]
+        - [ sh, -c, "swapoff -a || true" ]
+
+    # Target Group variables
+    frontend_target_name: "k8s-frontend-tg"
+    backend_target_name: "k8s-backend-tg"
+    frontend_port: 32080
+    backend_port: 32081
+
+    # LoadBalancer & ASG variables
+    alb_name: "k8s-alb"
+    worker_asg_name: "k8s-workers-asg"
+    worker_asg_min: 2
+    worker_asg_max: 6
+    worker_asg_desired: 2
+
+  vars_files:
+    - ../group_vars/all/pass.yml
+
+  tasks:
+    # Busqueda dinamica de VPC
+    - name: Get VPC info by name
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ vpc_name }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: vpc_info
+
+    - name: Fail if VPC not found
+      ansible.builtin.fail:
+        msg: "VPC '{{ vpc_name }}' not found in region {{ aws_region }}"
+      when: vpc_info.vpcs | length == 0
+
+    - name: Set fact for VPC ID
+      ansible.builtin.set_fact:
+        vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+
+    # Busqueda dinamica de subnets
+    - name: Get subnet info by name
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ subnet_name }}-*"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: subnet_info
+
+    - name: Fail if no subnets were found
+      ansible.builtin.fail:
+        msg: "No subnets named '{{ subnet_name }}-x' were found in region {{ aws_region }}"
+      when: subnet_info.subnets | length == 0
+
+    - name: Set fact for subnet IDs
+      ansible.builtin.set_fact:
+        subnet_ids: "{{ subnet_info.subnets | map(attribute='subnet_id') | list }}"
+
+    # Busqueda Security Group de workers
+    - name: Find Security Group by Name
+      amazon.aws.ec2_security_group_info:
+        filters:
+          group-name: "{{ sg_worker_name }}"
+          vpc-id: "{{ vpc_id }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: sg_workers
+
+    # Busqueda dinamica de workers
+    - name: Gather worker instances by tag
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:kubernetes.io/role": "{{ worker_tag }}"
+          instance-state-name: [ "running" ]
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: worker_info
+
+    - name: Import SSH public key to AWS
+      amazon.aws.ec2_key:
+        name: "{{ ssh_key_name }}"
+        key_material: "{{ lookup('file', ssh_public_key_path) }}"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: imported_keypair
+
+    - name: Create Target Group for Frontend
+      community.aws.elb_target_group:
+        name: "{{ frontend_target_name }}"
+        region: "{{ aws_region }}"
+        protocol: HTTP
+        port: "{{ frontend_port }}"
+        vpc_id: "{{ vpc_id }}"
+        health_check_protocol: HTTP
+        health_check_path: /
+        target_type: instance
+        state: present
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: frontend_tg
+
+    - name: Create Target Group for Backend
+      community.aws.elb_target_group:
+        name: "{{ backend_target_name }}"
+        region: "{{ aws_region }}"
+        protocol: HTTP
+        port: "{{ backend_port }}"
+        vpc_id: "{{ vpc_id }}"
+        health_check_protocol: HTTP
+        health_check_path: /api
+        target_type: instance
+        state: present
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: backend_tg
+
+    - name: Create Application Load Balancer
+      amazon.aws.elb_application_lb:
+        name: "{{ alb_name }}"
+        state: present
+        subnets: "{{ subnet_ids }}"
+        security_groups:
+          - "{{ sg_worker_name }}"
+        scheme: internet-facing
+        ip_address_type: ipv4
+        region: "{{ aws_region }}"
+        listeners:
+          - Protocol: HTTP
+            Port: 80
+            DefaultActions:
+              - Type: forward
+                TargetGroupName: "{{ frontend_target_name }}"
+            Rules:
+              - Priority: '1'
+                Conditions:
+                  - Field: path-pattern
+                    Values: ["/api*", "/api/*"]
+                Actions:
+                  - TargetGroupName: "{{ backend_target_name }}"
+                    Type: forward
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: alb
+
+    - name: Create Launch Template for Workers
+      amazon.aws.ec2_launch_template:
+        name: "{{ cluster_name }}-worker-lt"
+        version_description: "Launch Template for K8s workers"
+        region: "{{ aws_region }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        image_id: "{{ ami }}"
+        instance_type: "{{ worker_instance_type }}"
+        key_name: "{{ ssh_key_name }}"
+        user_data: "{{ user_data | b64encode }}"
+        block_device_mappings:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: "{{ worker_volume_size }}"
+              volume_type: "{{ worker_volume_type }}"
+              delete_on_termination: true
+        network_interfaces:
+          - device_index: 0
+            associate_public_ip_address: true
+            groups:
+              - "{{ sg_workers.security_groups[0].group_id }}"
+        monitoring:
+          enabled: true
+      register: worker_lt
+
+    - name: Create Auto Scaling Group for Workers
+      amazon.aws.autoscaling_group:
+        name: "{{ worker_asg_name }}"
+        state: present
+        min_size: "{{ worker_asg_min }}"
+        max_size: "{{ worker_asg_max }}"
+        desired_capacity: "{{ worker_asg_desired }}"
+        vpc_zone_identifier: "{{ subnet_ids }}"
+        launch_template:
+          version: "$Latest"
+          launch_template_name: "{{ worker_lt.template.launch_template_name }}"
+          launch_template_id: "{{ worker_lt.template.launch_template_id }}"
+        wait_for_instances: true
+        region: "{{ aws_region }}"
+        target_group_arns:
+          - "{{ frontend_tg.target_group_arn }}"
+          - "{{ backend_tg.target_group_arn }}"
+        metrics_collection: true
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        tags:
+          - Name: "{{ cluster_name }}-worker"
+            propagate_at_launch: true
+          - kubernetes.io/role: worker
+            propagate_at_launch: true
+      register: worker_asg
+
+    - name: Create Target Tracking Scaling Policy for ASG
+      community.aws.autoscaling_policy:
+        name: "k8s-predefined-policy-1"
+        state: present
+        asg_name: "{{ worker_asg_name }}"
+        policy_type: "TargetTrackingScaling"
+        target_tracking_config:
+          predefined_metric_spec:
+            predefined_metric_type: "ASGAverageCPUUtilization"
+          target_value: 70.0
+          disable_scalein: false
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+        region: "{{ aws_region }}"
+
+    - name: DEBUG - Show Worker ASG name and desired capacity
+      ansible.builtin.debug:
+        msg:
+          - "{{ worker_asg_name }}"
+          - "{{ worker_asg.instance_facts }}"
+
+#    - name: DEBUG - Query instances launched by ASG (list instance IDs)
+#      amazon.aws.ec2_instance_info:
+#        filters:
+#          "tag:aws:autoscaling:groupName": "{{ worker_asg_name }}"
+#        region: "{{ aws_region }}"
+#        aws_access_key: "{{ ec2_access_key }}"
+#        aws_secret_key: "{{ ec2_secret_key }}"
+#      register: asg_instances_info
+#      retries: 6
+#      delay: 10
+#      until: asg_instances_info.instances | length >= worker_asg_desired
+#
+#    - name: DEBUG - Show Worker instances details
+#      ansible.builtin.debug:
+#        var: asg_instances_info.instances
+

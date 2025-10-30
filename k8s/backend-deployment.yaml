@@ -32,4 +32,5 @@ spec:
       protocol: TCP
       port: 5000
       targetPort: 5000
-  type: ClusterIP
+      nodePort: 32801
+  type: NodePort        # ClusterIP
