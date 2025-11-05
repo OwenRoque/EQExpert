@@ -1,5 +1,5 @@
 ---
-- name: Deploy Application Load Balancer & Autoscaler
+- name: Deploy Application Load Balancer & Launch Template
   hosts: localhost
   connection: local
   gather_facts: false
@@ -32,6 +32,7 @@
         - docker.io
         - python3
         - python3-pip
+        - net-tools
       runcmd:
         - [ sh, -c, "usermod -aG docker ubuntu || true" ]
         - [ sh, -c, "systemctl enable docker && systemctl start docker" ]
@@ -103,17 +104,6 @@
         aws_secret_key: "{{ ec2_secret_key }}"
       register: sg_workers
 
-    # Busqueda dinamica de workers
-    - name: Gather worker instances by tag
-      amazon.aws.ec2_instance_info:
-        region: "{{ aws_region }}"
-        filters:
-          "tag:kubernetes.io/role": "{{ worker_tag }}"
-          instance-state-name: [ "running" ]
-        aws_access_key: "{{ ec2_access_key }}"
-        aws_secret_key: "{{ ec2_secret_key }}"
-      register: worker_info
-
     - name: Import SSH public key to AWS
       amazon.aws.ec2_key:
         name: "{{ ssh_key_name }}"
@@ -132,6 +122,10 @@
         vpc_id: "{{ vpc_id }}"
         health_check_protocol: HTTP
         health_check_path: /
+        health_check_interval: 30
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 4
+        health_check_timeout: 5
         target_type: instance
         state: present
         aws_access_key: "{{ ec2_access_key }}"
@@ -147,13 +141,17 @@
         vpc_id: "{{ vpc_id }}"
         health_check_protocol: HTTP
         health_check_path: /api
+        health_check_interval: 30
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 4
+        health_check_timeout: 5
         target_type: instance
         state: present
         aws_access_key: "{{ ec2_access_key }}"
         aws_secret_key: "{{ ec2_secret_key }}"
       register: backend_tg
 
-    - name: Create Application Load Balancer
+    - name: Create ALB with ONLY Default Listener Action
       amazon.aws.elb_application_lb:
         name: "{{ alb_name }}"
         state: present
@@ -168,15 +166,35 @@
             Port: 80
             DefaultActions:
               - Type: forward
-                TargetGroupName: "{{ frontend_target_name }}"
+                TargetGroupArn: "{{ frontend_tg.target_group_arn }}"
+        aws_access_key: "{{ ec2_access_key }}"
+        aws_secret_key: "{{ ec2_secret_key }}"
+      register: alb_default_listener
+
+    - name: ADD Conditional Rule to Existing ALB
+      amazon.aws.elb_application_lb:
+        name: "{{ alb_name }}"
+        state: present
+        subnets: "{{ subnet_ids }}"
+        security_groups:
+          - "{{ sg_worker_name }}"
+        scheme: internet-facing
+        ip_address_type: ipv4
+        region: "{{ aws_region }}"
+        listeners:
+          - Protocol: HTTP
+            Port: 80
+            DefaultActions:
+              - Type: forward
+                TargetGroupArn: "{{ frontend_tg.target_group_arn }}"
             Rules:
               - Priority: '1'
                 Conditions:
                   - Field: path-pattern
-                    Values: ["/api*", "/api/*"]
+                    Values: [ "/api*", "/api/*" ]
                 Actions:
-                  - TargetGroupName: "{{ backend_target_name }}"
-                    Type: forward
+                  - Type: forward
+                    TargetGroupArn: "{{ backend_tg.target_group_arn }}"
         aws_access_key: "{{ ec2_access_key }}"
         aws_secret_key: "{{ ec2_secret_key }}"
       register: alb

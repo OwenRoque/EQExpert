@@ -1,0 +1,74 @@
+---
+- name: Deploy EQExpert Application on Kubernetes Master Node
+  hosts: kube_control_plane
+  gather_facts: no
+  vars:
+    ansible_ssh_user: "ubuntu"
+    ansible_ssh_private_key_file: "~/.ssh/k8s_key.pem"
+
+    app_repo_url: "https://github.com/OwenRoque/EQExpert.git"
+    app_repo_dir: "EQExpert"
+    app_namespace: "eqexpert"
+  tasks:
+    - name: Ensure .kube directory exists for ubuntu
+      ansible.builtin.file:
+        path: "/home/{{ ansible_ssh_user }}/.kube"
+        state: directory
+        owner: "{{ ansible_ssh_user }}"
+        group: "{{ ansible_ssh_user }}"
+        mode: '0755'
+
+    - name: Copy admin.conf to ubuntu kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ ansible_ssh_user }}/.kube/config"
+        owner: "{{ ansible_ssh_user }}"
+        group: "{{ ansible_ssh_user }}"
+        mode: '0644'
+        remote_src: true
+      become: yes
+
+    - name: Create namespace if not exists
+      ansible.builtin.command: "kubectl create namespace {{ app_namespace }}"
+      register: ns_result
+      failed_when: ns_result.stderr and "AlreadyExists" not in ns_result.stderr
+      changed_when: "'Created' in ns_result.stdout"
+
+    - name: Set context default namespace
+      ansible.builtin.command: "kubectl config set-context --current --namespace={{ app_namespace }}"
+      become_user: "{{ ansible_ssh_user }}"
+      register: context
+
+    - name: Debug set-context Default Namespace Result
+      ansible.builtin.debug:
+        msg: "{{ context.stdout }}"
+
+    - name: Clone Repository
+      ansible.builtin.git:
+        repo: "{{ app_repo_url }}"
+        dest: "/home/{{ ansible_ssh_user }}/{{ app_repo_dir }}"
+        version: master
+        update: yes
+      register: clone
+
+    - name: Debug Clone Result
+      ansible.builtin.debug:
+        msg:
+         - "{{ clone.before }}"
+         - "{{ clone.after }}"
+
+    - name: Apply Deployments and Services (kubectl)
+      ansible.builtin.shell: |
+        cd EQExpert/
+        kubectl apply -f k8s/backend-deployment.yaml
+        kubectl apply -f k8s/frontend-deployment.yaml
+      args:
+        executable: /bin/bash
+      register: deploy
+
+    - name: Debug Deployments, Services Results
+      ansible.builtin.debug:
+        msg: "{{ deploy.stdout_lines }}"
+
+    - ansible.builtin.debug:
+        msg: "Aplicación EQExpert desplegada. Revisar ALB DNS"

@@ -1,0 +1,9 @@
+---
+- name: Import Playbook 00_provision.yaml
+  ansible.builtin.import_playbook: ansible/playbooks/00_provision.yaml
+
+- name: Import Playbook 01_alb_setup.yaml
+  ansible.builtin.import_playbook: ansible/playbooks/01_alb_setup.yaml
+
+- name: Import Playbook 02_build_inventory.yaml
+  ansible.builtin.import_playbook: ansible/playbooks/02_build_inventory.yaml
