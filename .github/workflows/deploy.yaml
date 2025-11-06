@@ -23,5 +23,5 @@ jobs:
 
       - name: Wait for rollout
         run: |
-          kubectl rollout status deployment/frontend-deployment
-          kubectl rollout status deployment/backend-deployment
+          kubectl rollout status deployment/frontend
+          kubectl rollout status deployment/backend
