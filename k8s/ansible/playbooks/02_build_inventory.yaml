@@ -8,6 +8,7 @@
     # Tags configurados en el playbook anterior
     master_tag_val: "control-plane"
     worker_tag_val: "worker"
+    cluster_name: "eqexpert"
 
   vars_files:
     - ../group_vars/all/pass.yml
@@ -64,12 +65,12 @@
     - name: Copy Kubespray sample inventory as base
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../../kubespray/inventory/sample/"
-        dest: "{{ playbook_dir }}/../../kubespray/inventory/mycluster/"
+        dest: "{{ playbook_dir }}/../../kubespray/inventory/{{ cluster_name }}/"
         remote_src: false
 
     - name: Create Kubespray compatible inventory
       ansible.builtin.copy:
-        dest: "{{ playbook_dir }}/../../kubespray/inventory/mycluster/inventory.ini"
+        dest: "{{ playbook_dir }}/../../kubespray/inventory/{{ cluster_name }}/inventory.ini"
         mode: '0644'
         content: |
           [kube_control_plane]

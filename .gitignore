@@ -56,4 +56,4 @@ next-env.d.ts
 
 # kubespray
 k8s/kubespray/
-
+k8s/kubespray/inventory/eqexpert/credentials/
