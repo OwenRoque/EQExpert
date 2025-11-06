@@ -1,0 +1,49 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # ------------------------
+      # Build & Push Docker Images
+      # ------------------------
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push Backend
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest ./src/backend
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest
+
+      - name: Build & Push Frontend
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest
+
+      # ------------------------
+      # Deploy to Kubernetes (via SSH to master node)
+      # ------------------------
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+
+      - name: Update K8s Deployments
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+          kubectl set image deployment/frontend-deployment frontend=${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest
+          kubectl set image deployment/backend-deployment backend=${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest
+          kubectl rollout status deployment/frontend-deployment
+          kubectl rollout status deployment/backend-deployment
+          EOF

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: owenroque/eqexpert_frontend:1.0
+          image: owenroque/eqexpert_frontend:latest
           ports:
             - containerPort: 3000
           env:
