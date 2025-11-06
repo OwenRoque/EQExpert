@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: owenroque/backend:1.0
+          image: owenroque/eqexpert_backend:1.0
           ports:
             - containerPort: 5000
           livenessProbe:
