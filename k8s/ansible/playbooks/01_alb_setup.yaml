@@ -140,7 +140,7 @@
         port: "{{ backend_port }}"
         vpc_id: "{{ vpc_id }}"
         health_check_protocol: HTTP
-        health_check_path: /api
+        health_check_path: /healthz
         health_check_interval: 30
         healthy_threshold_count: 2
         unhealthy_threshold_count: 4

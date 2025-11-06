@@ -11,7 +11,7 @@ app = FastAPI()
 # Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Tu frontend Next.js
+    allow_origins=["*"],  # Tu frontend Next.js
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -251,3 +251,7 @@ async def recommend(data: PresetRequest):
 
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
