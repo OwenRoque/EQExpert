@@ -9,15 +9,11 @@ source ansible-venv/bin/activate
 ```bash
 ansible-playbook infrastructure_deploy.yaml
 ```
+> _**Update**: YA se habilita configuraciones VXLAN de Calico aquí._
 
 ## 3. Verificar Conectividad con Nodos
 ```bash
 ansible all -i kubespray/inventory/eqexpert/inventory.ini -m ping -u ubuntu --private-key ~/.ssh/k8s_key.pem --vault-password-file ansible/vault.pass
-```
-
-> _Habilitar configuraciones VXLAN de Calico:_
-```bash
-ansible-playbook -i kubespray/inventory/eqexpert/inventory.ini ansible/playbooks/03_enable_networking_backend.yaml
 ```
 
 ## 4. Desplegar Kubernetes (con Kubespray)

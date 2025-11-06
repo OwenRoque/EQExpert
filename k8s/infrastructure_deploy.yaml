@@ -7,3 +7,6 @@
 
 - name: Import Playbook 02_build_inventory.yaml
   ansible.builtin.import_playbook: ansible/playbooks/02_build_inventory.yaml
+
+- name: Import Playbook 03_enable_networking_backend.yaml
+  ansible.builtin.import_playbook: 03_enable_networking_backend.yaml
