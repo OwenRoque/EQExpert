@@ -9,6 +9,7 @@
     app_repo_url: "https://github.com/OwenRoque/EQExpert.git"
     app_repo_dir: "EQExpert"
     app_namespace: "eqexpert"
+
   tasks:
     - name: Ensure .kube directory exists for ubuntu
       ansible.builtin.file:

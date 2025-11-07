@@ -19,7 +19,7 @@
         region: "{{ aws_region }}"
         filters:
           "tag:kubernetes.io/role": "{{ master_tag_val }}"
-          instance-state-name: ["running"]
+          instance-state-name: ["running", "pending"]
         aws_access_key: "{{ ec2_access_key }}"
         aws_secret_key: "{{ ec2_secret_key }}"
       register: master_info
@@ -29,7 +29,7 @@
         region: "{{ aws_region }}"
         filters:
           "tag:kubernetes.io/role": "{{ worker_tag_val }}"
-          instance-state-name: ["running"]
+          instance-state-name: ["running", "pending"]
         aws_access_key: "{{ ec2_access_key }}"
         aws_secret_key: "{{ ec2_secret_key }}"
       register: worker_info

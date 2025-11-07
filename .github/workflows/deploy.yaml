@@ -9,17 +9,26 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Login to Docker Hub
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Update frontend image
-        run: kubectl set image deployment/frontend frontend=${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest
+      - name: Login to Docker Hub
+        run: podman login docker.io -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
-      - name: Update backend image
-        run: kubectl set image deployment/backend backend=${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest
+      - name: Build & Push Backend
+        run: |
+          podman build -t docker.io/${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest ./src/backend
+          podman push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest
+
+      - name: Build & Push Frontend
+        run: |
+          podman build -t docker.io/${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest .
+          podman push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest
+
+      - name: Update K8s Images
+        run: |
+          kubectl set image deployment/frontend frontend=${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_frontend:latest
+          kubectl set image deployment/backend backend=${{ secrets.DOCKERHUB_USERNAME }}/eqexpert_backend:latest
 
       - name: Wait for rollout
         run: |

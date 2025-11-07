@@ -1,0 +1,41 @@
+- name: Apply Custom Cluster Setup Configurations
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Set Calico backend to VXLAN
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../kubespray/inventory/eqexpert/group_vars/k8s_cluster/k8s-net-calico.yml"
+        regexp: '^# calico_network_backend:'
+        line: 'calico_network_backend: vxlan'
+
+    - name: Disable IP-in-IP mode for Calico
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../kubespray/inventory/eqexpert/group_vars/k8s_cluster/k8s-net-calico.yml"
+        regexp: '^# calico_ipip_mode:'
+        line: "calico_ipip_mode: 'Never'"
+
+    - name: Force VXLAN encapsulation mode
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../kubespray/inventory/eqexpert/group_vars/k8s_cluster/k8s-net-calico.yml"
+        regexp: '^# calico_vxlan_mode:'
+        line: "calico_vxlan_mode: 'Always'"
+
+    - name: Enable Metrics Server
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../kubespray/inventory/eqexpert/group_vars/k8s_cluster/addons.yml"
+        regexp: '^metrics_server_enabled:'
+        line: 'metrics_server_enabled: true'
+
+    - name: Allow insecure TLS for Metrics Server
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../kubespray/inventory/eqexpert/group_vars/k8s_cluster/addons.yml"
+        regexp: '^# metrics_server_kubelet_insecure_tls:'
+        line: 'metrics_server_kubelet_insecure_tls: true'
+
+    - name: Set Metrics Resolution Interval
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../kubespray/inventory/eqexpert/group_vars/k8s_cluster/addons.yml"
+        regexp: '^# metrics_server_metric_resolution:'
+        line: 'metrics_server_metric_resolution: 15s'
