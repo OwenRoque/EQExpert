@@ -13,7 +13,8 @@ jobs:
 
       - name: Apply Kubernetes manifests
         run: |
-          kubectl apply -n eqexpert -f k8s/
+          kubectl apply -n eqexpert -f k8s/deploy/
+          kubectl apply -n eqexpert -f k8s/hpa/
 
       - name: Wait for stable rollout
         run: |

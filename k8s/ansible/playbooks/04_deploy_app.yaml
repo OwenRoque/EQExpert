@@ -61,8 +61,8 @@
     - name: Apply Deployments and Services (kubectl)
       ansible.builtin.shell: |
         cd EQExpert/
-        kubectl apply -f k8s/backend-deployment.yaml
-        kubectl apply -f k8s/frontend-deployment.yaml
+        kubectl apply -f k8s/deploy/backend-deployment.yaml
+        kubectl apply -f k8s/deploy/frontend-deployment.yaml
       args:
         executable: /bin/bash
       register: deploy
