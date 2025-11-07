@@ -71,5 +71,18 @@
       ansible.builtin.debug:
         msg: "{{ deploy.stdout_lines }}"
 
+    - name: Apply HPA for Backend and Frontend
+      ansible.builtin.shell: |
+        cd EQExpert/
+        kubectl apply -f k8s/hpa/backend-hpa.yaml
+        kubectl apply -f k8s/hpa/frontend-hpa.yaml
+      args:
+        executable: /bin/bash
+      register: hpa_apply
+
+    - name: Debug HPA Apply Results
+      ansible.builtin.debug:
+        msg: "{{ hpa_apply.stdout_lines }}"
+
     - ansible.builtin.debug:
         msg: "Aplicación EQExpert desplegada. Revisar ALB DNS"
