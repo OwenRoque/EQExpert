@@ -19,6 +19,13 @@ spec:
           image: owenroque/eqexpert_frontend:latest
           ports:
             - containerPort: 3000
+
+          resources:
+            requests:
+              cpu: "150m"
+            limits:
+              cpu: "400m"
+
           env:
             - name: BACKEND_URL
               value: "http://backend-service:5000"

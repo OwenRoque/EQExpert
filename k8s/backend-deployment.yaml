@@ -19,6 +19,13 @@ spec:
           image: owenroque/eqexpert_backend:latest
           ports:
             - containerPort: 5000
+
+          resources:
+            requests:
+              cpu: "100m"
+            limits:
+              cpu: "300m"
+
           livenessProbe:
             httpGet:
               path: /healthz
