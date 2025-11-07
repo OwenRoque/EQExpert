@@ -1,0 +1,21 @@
+name: Deploy to Kubernetes
+
+on:
+  push:
+    branches: ["master"]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -n eqexpert -f k8s/
+
+      - name: Wait for stable rollout
+        run: |
+          kubectl rollout status deployment/backend -n eqexpert
+          kubectl rollout status deployment/frontend -n eqexpert
