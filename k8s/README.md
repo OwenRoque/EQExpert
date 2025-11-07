@@ -30,3 +30,8 @@ ansible-playbook -i inventory/eqexpert/inventory.ini --become --become-user=root
 cd ..
 ansible-playbook -i kubespray/inventory/eqexpert/inventory.ini ansible/playbooks/04_deploy_app.yaml
 ```
+
+## 6. Desplegar Self-Hosted Runner (CI/CD pipelines)
+```bash
+ansible-playbook -i kubespray/inventory/eqexpert/inventory.ini ansible/playbooks/05_install_runner.yaml --vault-password-file ansible/vault.pass --timeout=30
+```
